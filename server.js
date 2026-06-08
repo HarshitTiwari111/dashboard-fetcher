@@ -10,8 +10,9 @@ const SHEET_ID = "1v4TBfbkFNISx33JWeqD-xZcedZRrf0OMow4u2VXLGIM";
 const SHEET_TAB = "Test";
 
 async function getGoogleSheetsClient() {
+  const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
   const auth = new google.auth.GoogleAuth({
-    keyFile: "service-account.json",
+    credentials,
     scopes: ["https://www.googleapis.com/auth/spreadsheets"],
   });
   const authClient = await auth.getClient();
@@ -58,11 +59,10 @@ app.post("/fetch", async (req, res) => {
     console.log("Month:", monthValue);
     console.log("==============================\n");
 
-    browser = await puppeteer.launch({
-      headless: false,
-      defaultViewport: null,
-      args: ["--start-maximized", "--no-sandbox", "--disable-setuid-sandbox"],
-    });
+   browser = await puppeteer.launch({
+  headless: "new",
+  args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+});
 
     const page = await browser.newPage();
 
@@ -344,6 +344,6 @@ console.log(JSON.stringify(selects, null, 2));
   }
 });
 
-app.listen(3000, () => {
-  console.log("Server Running On Port 3000");
+app.listen(process.env.PORT || 3000, () => {
+  console.log("Server Running On Port", process.env.PORT || 3000);
 });
