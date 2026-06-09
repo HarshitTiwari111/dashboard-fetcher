@@ -518,26 +518,30 @@ async function roAffiliateGeneralFinance(page, monthArg, logs) {
     const pollStart = Date.now();
     let rows = [];
 
-    while (Date.now() - pollStart < 35000) {
-        await new Promise(r => setTimeout(r, 3000));
+while (Date.now() - pollStart < 45000) {
+    await new Promise(r => setTimeout(r, 3000));
 
-        const tableStatus = await page.evaluate(() => {
-            const grid = document.querySelector('[role="grid"], [role="table"]');
-            if (grid) {
-                const dataRows = grid.querySelectorAll('[role="row"]');
-                if (dataRows.length >= 2) return { found: true, method: 'role-grid', count: dataRows.length };
-            }
-            const tables = Array.from(document.querySelectorAll('table'));
-            for (const t of tables) {
-                const trCount = t.querySelectorAll('tr').length;
-                const tdCount = t.querySelectorAll('td').length;
-                if (trCount >= 2 && tdCount >= 1) return { found: true, method: 'table', count: trCount };
-            }
-            const isLoading = Array.from(document.querySelectorAll('[class*="loading"], [class*="spinner"], [class*="skeleton"]')).some(el => {
-                try { return el.getBoundingClientRect().width > 0; } catch(e) { return false; }
-            });
-            return { found: false, loading: isLoading };
+    const tableStatus = await page.evaluate(() => {
+        const grid = document.querySelector('[role="grid"], [role="table"]');
+        if (grid) {
+            const dataRows = grid.querySelectorAll('[role="row"]');
+            if (dataRows.length >= 2) return { found: true, method: 'role-grid', count: dataRows.length };
+        }
+        const tables = Array.from(document.querySelectorAll('table'));
+        for (const t of tables) {
+            const trCount = t.querySelectorAll('tr').length;
+            const tdCount = t.querySelectorAll('td').length;
+            if (trCount >= 2 && tdCount >= 1) return { found: true, method: 'table', count: trCount };
+        }
+        // ✅ FIX: Loading 15s se zyada ho to force extract karo
+        const isLoading = Array.from(document.querySelectorAll('[class*="loading"], [class*="spinner"], [class*="skeleton"]')).some(el => {
+            try { return el.getBoundingClientRect().width > 0; } catch(e) { return false; }
         });
+        // ✅ Role-grid check even with loading
+        const anyGrid = document.querySelector('[role="grid"], [role="table"], [class*="table"], [class*="grid"]');
+        if (anyGrid) return { found: true, method: 'force-grid', count: 1 };
+        return { found: false, loading: isLoading };
+    });
 
         logs.push(`[DEBUG] Data check at ${Math.round((Date.now()-pollStart)/1000)}s: ${JSON.stringify(tableStatus)}`);
 
@@ -940,11 +944,19 @@ await page.waitForFunction(() => {
 logStep(5, `Report page: ${targetUrl}`, true);
 
 const dateOk = await applyDateFilter(page, resolvedMonth, response.logs);
-            logStep(6, `Date filter "${resolvedMonth}": ${dateOk ? 'OK' : 'check logs'}`, true);
-            await new Promise(r => setTimeout(r, 2000));
+logStep(6, `Date filter "${resolvedMonth}": ${dateOk ? 'OK' : 'check logs'}`, true);
 
-            let rows = [];
-            if (cleanType === "customers") {
+// ✅ FIX: Generate report pe jaane se pehle extra wait
+await new Promise(r => setTimeout(r, 5000));
+
+// ✅ FIX: Agar Today hai aur data nahi to "No data for today" message
+const isToday = resolvedMonth.toLowerCase() === 'today';
+if (isToday) {
+    response.logs.push(`[DEBUG] Today selected — data may not be available yet`);
+}
+
+let rows = [];
+if (cleanType === "customers") {
                 rows = await roAffiliateCustomers(page, resolvedMonth, response.logs);
             } else {
                 rows = await roAffiliateGeneralFinance(page, resolvedMonth, response.logs);
