@@ -201,23 +201,35 @@ function filterRowsUpToToday(dataMatrix) {
 async function applyDateFilter(page, monthArg, logs) {
     logs.push(`[DEBUG] applyDateFilter: "${monthArg}"`);
     try {
-        // Page fully load hone do
-        await new Promise(r => setTimeout(r, 2000));
+        await new Promise(r => setTimeout(r, 3000));
 
+        // ✅ FIX: Date button dhundo — calendar icon wala button
         const openResult = await page.evaluate(() => {
-            const candidates = Array.from(document.querySelectorAll('button, [role="button"], div, span'));
-            const dateBtn = candidates.find(el => {
+            // Method 1: Button with date range text
+            const allBtns = Array.from(document.querySelectorAll('button'));
+            let dateBtn = allBtns.find(el => {
                 const t = (el.innerText || '').trim().toLowerCase();
-                return (t === 'today' || t === 'yesterday' || t.includes('month') ||
-                        t.includes('year') || t.includes('week') ||
-                        /\d{1,2}\/\d{1,2}/.test(t)) && t.length < 60;
+                return (t.includes('this year') || t.includes('today') || 
+                        t.includes('this month') || t.includes('last month') ||
+                        t.includes('yesterday') || /\d{2}\/\d{2}\/\d{4}/.test(t)) && t.length < 80;
             });
+            // Method 2: Button with SVG calendar icon
+            if (!dateBtn) {
+                dateBtn = allBtns.find(el => {
+                    const hasSvg = el.querySelector('svg') !== null;
+                    const t = (el.innerText || '').trim().toLowerCase();
+                    return hasSvg && (t.includes('year') || t.includes('month') || t.includes('today') || t === '');
+                });
+            }
+            // Method 3: Any popover trigger near top
+            if (!dateBtn) {
+                dateBtn = document.querySelector('[data-scope="popover"] button, [aria-haspopup="dialog"] button');
+            }
             if (dateBtn) { dateBtn.click(); return `OPENED: "${dateBtn.innerText.trim()}"`; }
             return 'NO_DATE_OPENER_FOUND';
         });
         logs.push(`[DEBUG] Open date picker: ${openResult}`);
-        await new Promise(r => setTimeout(r, 1500));
-
+        await new Promise(r => setTimeout(r, 2000));
         const res = await page.evaluate((mArg) => {
             const norm = s => (s || '').trim().toLowerCase();
             const all = Array.from(document.querySelectorAll(
@@ -928,10 +940,17 @@ async function rewardsAffiliateFetchTable(page, logs) {
                 rows = await roAffiliateGeneralFinance(page, resolvedMonth, response.logs);
             }
 
-            response.logs.push(`[DEBUG] Harvested: ${rows.length} rows`);
-            if (!rows || rows.length === 0) { logStep(10, "No data found", false); finish(false); return; }
-
-            const n = v => {
+           response.logs.push(`[DEBUG] Harvested: ${rows.length} rows`);
+    
+    // ✅ FIX: Agar data nahi aaya to sirf headers sheet mein likho
+    if (!rows || rows.length === 0) {
+        const fallbackHeaders = [["Customer ID", "Gender", "Geo", "Signup Date", "Company", "Affiliate", "Status"]];
+        response.data = fallbackHeaders;
+        logStep(10, "No data — writing headers only", false);
+        finish(false);
+        return;
+    }
+    const n = v => {
                 if (v === undefined || v === null || v === '') return 0;
                 const clean = String(v).replace(/[€$,]/g,'').replace('%','').trim();
                 const num = Number(clean); return isNaN(num) ? v : num;
