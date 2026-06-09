@@ -2,6 +2,8 @@ const express = require("express");
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const { google } = require("googleapis");
+const { exec } = require('child_process');
+const path = require('path');
 
 const app = express();
 app.use(express.json({ limit: "10mb" }));
@@ -21,33 +23,61 @@ async function getGoogleSheetsClient() {
 
 async function writeToGoogleSheet(data) {
   const sheets = await getGoogleSheetsClient();
-
   await sheets.spreadsheets.values.clear({
     spreadsheetId: SHEET_ID,
     range: `${SHEET_TAB}!A:Z`,
   });
-
   const headers = Object.keys(data[0]);
   const rows = data.map((row) => Object.values(row));
   const values = [headers, ...rows];
-
   await sheets.spreadsheets.values.update({
     spreadsheetId: SHEET_ID,
     range: `${SHEET_TAB}!A1`,
     valueInputOption: "USER_ENTERED",
     requestBody: { values },
   });
-
   console.log(`Google Sheet updated: ${values.length - 1} data rows written`);
 }
 
+// ── HOME ──
 app.get("/", (req, res) => {
   res.send("Dashboard Fetcher Running");
 });
 
+// ── BRIDGE ROUTE (replaces bridge.php) ──
+app.post('/bridge', (req, res) => {
+  const { dashboard, site, month, report_type } = req.body;
+
+  if (!dashboard || !site || !month) {
+    return res.json({ success: false, logs: ['Missing parameters'] });
+  }
+
+  const scraperPath = path.join(__dirname, 'scraper.js');
+  const reportType = report_type || 'General';
+  const command = `node "${scraperPath}" "${dashboard}" "${site}" "${month}" "${reportType}"`;
+
+  console.log('Running:', command);
+
+  exec(command, { timeout: 120000 }, (error, stdout, stderr) => {
+    try {
+      const result = JSON.parse(stdout);
+      res.json(result);
+    } catch (e) {
+      res.json({
+        success: false,
+        logs: [
+          '[BRIDGE] Response JSON parse karne mein error.',
+          '[BRIDGE] Parse error: ' + e.message,
+          '[BRIDGE] Raw response (first 300 chars): ' + stdout.substring(0, 300)
+        ]
+      });
+    }
+  });
+});
+
+// ── FETCH ROUTE ──
 app.post("/fetch", async (req, res) => {
   let browser;
-
   try {
     const { dashboardUrl, username, password, casinoValue, monthValue } = req.body;
 
@@ -59,14 +89,14 @@ app.post("/fetch", async (req, res) => {
     console.log("Month:", monthValue);
     console.log("==============================\n");
 
-   browser = await puppeteer.launch({
-  headless: "new",
-  args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
-});
+    browser = await puppeteer.launch({
+      headless: "new",
+      defaultViewport: null,
+      args: ["--start-maximized", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+    });
 
     const page = await browser.newPage();
 
-    // ── LOGIN ──────────────────────────────────
     console.log("Opening Login Page...");
     await page.goto(dashboardUrl, { waitUntil: "networkidle2", timeout: 60000 });
 
@@ -92,28 +122,25 @@ app.post("/fetch", async (req, res) => {
 
     console.log("LOGIN SUCCESS");
 
-    // ── REPORT PAGE ───────────────────────────
     await page.goto(
       "https://www.rewardsaffiliates.com/members/affiliate/revshare/revshare_monthly.aspx",
       { waitUntil: "networkidle2", timeout: 60000 }
     );
     console.log("Report Page Opened");
     console.log("Current URL:", page.url());
-console.log("Title:", await page.title());
+    console.log("Title:", await page.title());
 
-const selects = await page.evaluate(() => {
-  return Array.from(document.querySelectorAll("select")).map(s => ({
-    id: s.id,
-    name: s.name
-  }));
-});
+    const selects = await page.evaluate(() => {
+      return Array.from(document.querySelectorAll("select")).map(s => ({
+        id: s.id,
+        name: s.name
+      }));
+    });
+    console.log("SELECT ELEMENTS:");
+    console.log(JSON.stringify(selects, null, 2));
 
-console.log("SELECT ELEMENTS:");
-console.log(JSON.stringify(selects, null, 2));
-    // ── CASINO DROPDOWN (OPTIONAL — skip if not found) ────────────────
     const casinoSelector =
       "#ctl00_ctl00_ContentPlaceHolderBody_ContentPlaceHolderBodyLI_ddlCasino";
-
     const casinoExists = await page
       .waitForSelector(casinoSelector, { timeout: 4000 })
       .then(() => true)
@@ -126,21 +153,16 @@ console.log(JSON.stringify(selects, null, 2));
       console.log("Casino Dropdown Not Found — skipping");
     }
 
-    // ── MONTH DROPDOWN ────────────────────────
     const monthSelector =
       "#ctl00_ctl00_ContentPlaceHolderBody_ContentPlaceHolderBodyLI_ddlDate";
-
     await page.waitForSelector(monthSelector, { timeout: 30000 });
     await page.select(monthSelector, monthValue);
     console.log("Month Selected:", monthValue);
 
-    // ── CLICK GO AND WAIT FOR POSTBACK ────────
     console.log("Clicking GO...");
-
     await page.click(
       "#ctl00_ctl00_ContentPlaceHolderBody_ContentPlaceHolderBodyLI_btnGo"
     );
-
     console.log("Waiting for postback...");
 
     try {
@@ -164,18 +186,12 @@ console.log(JSON.stringify(selects, null, 2));
       console.log("UpdateProgress wait timed out — using fallback delay");
     }
 
-    // Hard wait for ASP.NET to finish rendering
     await new Promise((r) => setTimeout(r, 5000));
-
-    // Wait for network to settle
-    await page
-      .waitForNetworkIdle({ idleTime: 2000, timeout: 15000 })
-      .catch(() => {});
+    await page.waitForNetworkIdle({ idleTime: 2000, timeout: 15000 }).catch(() => {});
 
     console.log("Page URL:", page.url());
     console.log("Page Title:", await page.title());
 
-    // ── CHECK FOR IFRAMES ─────────────────────
     const frames = page.frames();
     console.log("\nTotal Frames on Page:", frames.length);
     frames.forEach((f, i) => console.log(`  Frame ${i}: ${f.url()}`));
@@ -183,25 +199,15 @@ console.log(JSON.stringify(selects, null, 2));
     let targetFrame = page.mainFrame();
     for (const frame of frames) {
       const url = frame.url();
-      if (
-        url.includes("revshare") ||
-        url.includes("report") ||
-        url.includes("affiliate")
-      ) {
-        if (url !== page.url()) {
-          targetFrame = frame;
-          console.log("Switching to frame:", url);
-          break;
-        }
+      if (url.includes("revshare") || url.includes("report") || url.includes("affiliate")) {
+        if (url !== page.url()) { targetFrame = frame; break; }
       }
     }
 
-    // Save debug files
     fs.writeFileSync("report-after-go.html", await page.content());
     await page.screenshot({ path: "report-page.png", fullPage: true });
     console.log("Saved report-after-go.html and report-page.png");
 
-    // ── FIND ALL TABLES (DEBUG) ───────────────
     const debugInfo = await targetFrame.evaluate(() => {
       const tables = document.querySelectorAll("table");
       return Array.from(tables).map((table, i) => {
@@ -213,15 +219,11 @@ console.log(JSON.stringify(selects, null, 2));
           totalRows: rows.length,
           totalTds: table.querySelectorAll("td").length,
           totalThs: table.querySelectorAll("th").length,
-          rowColCounts: Array.from(rows)
-            .slice(0, 10)
-            .map((r) => ({
-              tds: r.querySelectorAll("td").length,
-              ths: r.querySelectorAll("th").length,
-              preview: Array.from(r.querySelectorAll("td, th"))
-                .slice(0, 5)
-                .map((c) => c.textContent.trim().substring(0, 30)),
-            })),
+          rowColCounts: Array.from(rows).slice(0, 10).map((r) => ({
+            tds: r.querySelectorAll("td").length,
+            ths: r.querySelectorAll("th").length,
+            preview: Array.from(r.querySelectorAll("td, th")).slice(0, 5).map((c) => c.textContent.trim().substring(0, 30)),
+          })),
         };
       });
     });
@@ -231,72 +233,34 @@ console.log(JSON.stringify(selects, null, 2));
     console.log("==============================");
     console.log(JSON.stringify(debugInfo, null, 2));
 
-    // ── SCRAPE DATA ───────────────────────────
     const data = await targetFrame.evaluate(() => {
-      const keys = [
-        "date",
-        "clicks",
-        "startedRegistrations",
-        "registrations",
-        "newBettors",
-        "bettingPlayers",
-        "grossWin",
-        "bonusMoney",
-        "casinoProfit",
-        "yourEarnings",
-      ];
-
+      const keys = ["date","clicks","startedRegistrations","registrations","newBettors",
+        "bettingPlayers","grossWin","bonusMoney","casinoProfit","yourEarnings"];
       const tables = document.querySelectorAll("table");
-
-      let bestTable = null;
-      let bestCount = 0;
-
+      let bestTable = null; let bestCount = 0;
       tables.forEach((table) => {
         const count = table.querySelectorAll("td, th").length;
-        if (count > bestCount) {
-          bestCount = count;
-          bestTable = table;
-        }
+        if (count > bestCount) { bestCount = count; bestTable = table; }
       });
-
-      if (!bestTable) {
-        return { rows: [], colCount: 0 };
-      }
-
+      if (!bestTable) return { rows: [], colCount: 0 };
       const allRows = bestTable.querySelectorAll("tr");
-
       let maxCols = 0;
-      allRows.forEach((row) => {
-        const c = row.querySelectorAll("td, th").length;
-        if (c > maxCols) maxCols = c;
-      });
-
+      allRows.forEach((row) => { const c = row.querySelectorAll("td, th").length; if (c > maxCols) maxCols = c; });
       const minCols = Math.max(maxCols - 2, 2);
-      const result = [];
-      let headerSkipped = false;
-
+      const result = []; let headerSkipped = false;
       allRows.forEach((row) => {
         const cols = row.querySelectorAll("td, th");
         if (cols.length < minCols) return;
-
         const cellText = Array.from(cols).map((c) => c.textContent.trim());
         if (cellText.every((c) => c === "")) return;
-
-        // Skip first non-empty row — it's the header
-        if (!headerSkipped) {
-          headerSkipped = true;
-          return;
-        }
-
+        if (!headerSkipped) { headerSkipped = true; return; }
         const rowObj = {};
         cellText.forEach((text, index) => {
           const key = keys[index] !== undefined ? keys[index] : `col_${index + 1}`;
           rowObj[key] = text;
         });
-
         result.push(rowObj);
       });
-
       return { rows: result, colCount: maxCols };
     });
 
@@ -316,7 +280,6 @@ console.log(JSON.stringify(selects, null, 2));
     await browser.close();
     browser = null;
 
-    // ── WRITE TO GOOGLE SHEETS ────────────────
     if (data.rows.length > 0) {
       console.log("\nWriting to Google Sheets...");
       await writeToGoogleSheet(data.rows);
@@ -337,13 +300,12 @@ console.log(JSON.stringify(selects, null, 2));
   } catch (error) {
     console.error("\nERROR:", error.message);
     console.error(error.stack);
-    try {
-      if (browser) await browser.close();
-    } catch (e) {}
+    try { if (browser) await browser.close(); } catch (e) {}
     res.status(500).json({ success: false, error: error.message });
   }
 });
 
+// ── START SERVER ──
 app.listen(process.env.PORT || 3000, () => {
   console.log("Server Running On Port", process.env.PORT || 3000);
 });
