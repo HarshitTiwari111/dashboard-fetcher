@@ -67,9 +67,49 @@ app.post('/bridge', (req, res) => {
 
   console.log('Running:', command);
 
-  exec(command, { timeout: 120000 }, (error, stdout, stderr) => {
+  // ✅ Timeout 3 min + maxBuffer 10MB
+  exec(command, { timeout: 180000, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
+    
+    if (error) {
+      console.log('Exec error:', error.message);
+      console.log('Stderr:', stderr ? stderr.substring(0, 300) : 'none');
+    }
+
+    const rawOutput = (stdout || '').trim();
+    console.log('Raw output length:', rawOutput.length);
+    console.log('Raw output preview:', rawOutput.substring(0, 200));
+
+    if (!rawOutput) {
+      return res.json({
+        success: false,
+        logs: [
+          '[BRIDGE] Scraper ne koi output nahi diya.',
+          '[BRIDGE] Error: ' + (error ? error.message : 'Unknown'),
+          '[BRIDGE] Stderr: ' + (stderr ? stderr.substring(0, 200) : 'none')
+        ]
+      });
+    }
+
+    // JSON last line se nikalo (scraper console logs bhi print karta hai)
+    const lines = rawOutput.split('\n');
+    let jsonResult = null;
+    for (let i = lines.length - 1; i >= 0; i--) {
+      const line = lines[i].trim();
+      if (line.startsWith('{') && line.endsWith('}')) {
+        try {
+          jsonResult = JSON.parse(line);
+          break;
+        } catch(e) {}
+      }
+    }
+
+    if (jsonResult) {
+      return res.json(jsonResult);
+    }
+
+    // Fallback — poora output parse karo
     try {
-      const result = JSON.parse(stdout);
+      const result = JSON.parse(rawOutput);
       res.json(result);
     } catch (e) {
       res.json({
@@ -77,7 +117,7 @@ app.post('/bridge', (req, res) => {
         logs: [
           '[BRIDGE] Response JSON parse karne mein error.',
           '[BRIDGE] Parse error: ' + e.message,
-          '[BRIDGE] Raw response (first 300 chars): ' + stdout.substring(0, 300)
+          '[BRIDGE] Raw response (first 300 chars): ' + rawOutput.substring(0, 300)
         ]
       });
     }
