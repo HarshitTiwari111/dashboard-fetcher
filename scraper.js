@@ -798,20 +798,27 @@ async function rewardsAffiliateFetchTable(page, logs) {
 const { execSync } = require('child_process');
 
 // Chrome dhundo
-// Chrome path find karo
+// Chrome path find karo - exact executable
 let chromePath;
 try {
     const { execSync } = require('child_process');
-    const result = execSync('find /opt/render/.cache -name "chrome" 2>/dev/null | grep -v ".zip" | head -1').toString().trim();
+    const result = execSync(
+        'find /opt/render/.cache/puppeteer -name "chrome" -type f ! -name "*.zip" 2>/dev/null | head -1'
+    ).toString().trim();
     if (result) chromePath = result;
-} catch(e) {}
+} catch(e) { chromePath = null; }
 
 response.logs.push(`[DEBUG] Chrome found at: "${chromePath || 'auto'}"`);
 
 browser = await puppeteer.launch({
     headless: true,
     executablePath: chromePath || undefined,
-    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
+    args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu'
+    ]
 });
         page = await browser.newPage();
         await page.setViewport({ width: 1366, height: 768 });
