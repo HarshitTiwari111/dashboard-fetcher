@@ -653,9 +653,27 @@ async function extractCustomersTable(page, logs) {
 
 async function roAffiliateCustomers(page, monthArg, logs) {
     logs.push(`[DEBUG] Flow: CUSTOMERS`);
+
+    // Date filter pehle apply karo
+    await applyDateFilter(page, monthArg, logs);
+    await new Promise(r => setTimeout(r, 2000));
+
+    // Generate report button - multiple selectors try karo
     const clicked = await page.evaluate(() => {
-        const btn = Array.from(document.querySelectorAll('button')).find(b =>
-            (b.innerText || '').trim().toLowerCase() === 'generate report');
+        const allBtns = Array.from(document.querySelectorAll('button'));
+        
+        // Exact match
+        let btn = allBtns.find(b => (b.innerText || '').trim().toLowerCase() === 'generate report');
+        
+        // Partial match
+        if (!btn) btn = allBtns.find(b => (b.innerText || '').trim().toLowerCase().includes('generate'));
+        
+        // Refresh icon wala button
+        if (!btn) btn = allBtns.find(b => {
+            const svg = b.querySelector('svg');
+            return svg && (b.innerText || '').trim() === '';
+        });
+
         if (btn) { btn.click(); return true; }
         return false;
     });
