@@ -787,7 +787,9 @@ async function rewardsAffiliateFetchTable(page, logs) {
 // ═══════════════════════════════════════════
 (async () => {
     try {
-        const config = JSON.parse(fs.readFileSync('config.json', 'utf8'));
+        const config = process.env.CONFIG_JSON
+  ? JSON.parse(process.env.CONFIG_JSON)
+  : JSON.parse(fs.readFileSync('config.json', 'utf8'));
         const dashConfig = config.dashboards[dashboardKey];
         if (!dashConfig) { logStep(0, "Load configuration", false); throw new Error(`Dashboard '${dashboardKey}' not found`); }
         logStep(0, "Load configuration", true);
