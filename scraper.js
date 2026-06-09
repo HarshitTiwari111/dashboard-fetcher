@@ -1,3 +1,28 @@
+process.on('uncaughtException', (e) => {
+  console.log(JSON.stringify({
+    success: false,
+    dashboard: process.argv[2],
+    site: process.argv[3], 
+    month: process.argv[4],
+    report_type: process.argv[5],
+    data: [],
+    logs: ['[UNCAUGHT] ' + e.message, '[STACK] ' + e.stack]
+  }));
+  process.exit(0);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.log(JSON.stringify({
+    success: false,
+    dashboard: process.argv[2],
+    site: process.argv[3],
+    month: process.argv[4], 
+    report_type: process.argv[5],
+    data: [],
+    logs: ['[UNHANDLED_REJECTION] ' + String(reason)]
+  }));
+  process.exit(0);
+});
 // ✅ puppeteer-core nahi, puppeteer use karo
 const puppeteer = require('puppeteer');
 const fs = require('fs');
