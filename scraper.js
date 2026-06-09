@@ -37,8 +37,10 @@ function logStep(stepNum, description, isSuccess) {
 }
 function finish(success) {
     response.success = success;
-    console.log(JSON.stringify(response));
-    process.exit(0);
+    const out = JSON.stringify(response);
+    process.stdout.write(out + '\n', () => {
+        process.exit(0);
+    });
 }
 
 // ─────────────────────────────────────────────
@@ -882,77 +884,137 @@ browser = await puppeteer.launch({
 
         } else {
             // RO_AFFILIATE
-            await page.goto(dashConfig.login_url, { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => null);
-await new Promise(r => setTimeout(r, 15000)); 
-            logStep(2, "Login page loaded", true);
+            try {
+                await page.goto(dashConfig.login_url, {
+                    waitUntil: 'networkidle2', timeout: 90000
+                }).catch(() => null);
+                await new Promise(r => setTimeout(r, 15000));
+                logStep(2, "Login page loaded", true);
+                response.logs.push(`[DEBUG] Login URL: ${page.url()}`);
 
-            const uSel = 'input[type="text"], input[type="email"], input[id*="username"]';
-            const pSel = 'input[type="password"]';
-            const bSel = 'button[type="submit"], input[type="submit"]';
+                const uSel = 'input[type="text"], input[type="email"], input[id*="username"]';
+                const pSel = 'input[type="password"]';
+                const bSel = 'button[type="submit"], input[type="submit"]';
 
-            await page.waitForSelector(uSel, { visible: true, timeout: 35000 });
-            const uF = await page.$(uSel);
-            await uF.click({ clickCount: 3 }); await uF.press('Backspace');
-            await uF.type(dashConfig.credentials.username, { delay: 100 });
-            await page.waitForSelector(pSel, { visible: true, timeout: 15000 });
-            const pF = await page.$(pSel);
-            await pF.click({ clickCount: 3 }); await pF.press('Backspace');
-            await pF.type(dashConfig.credentials.password, { delay: 100 });
-            logStep(3, "Credentials injected", true);
+                let uF = null;
+                try {
+                    await page.waitForSelector(uSel, { visible: true, timeout: 35000 });
+                    uF = await page.$(uSel);
+                } catch(e) {
+                    response.logs.push(`[DEBUG] Username field not found: ${e.message}`);
+                    logStep(3, "Username field not found", false);
+                    finish(false); return;
+                }
 
-            await Promise.all([
-                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null),
-                page.click(bSel)
-            ]);
-            await new Promise(r => setTimeout(r, 10000));
-            logStep(4, "Logged in", true);
+                let pF = null;
+                try {
+                    await page.waitForSelector(pSel, { visible: true, timeout: 15000 });
+                    pF = await page.$(pSel);
+                } catch(e) {
+                    response.logs.push(`[DEBUG] Password field not found: ${e.message}`);
+                    logStep(3, "Password field not found", false);
+                    finish(false); return;
+                }
 
-            const cleanType = (reportTypeArg || '').toLowerCase().trim();
-            const targetUrl = cleanType === "finance"
-                ? "https://ro-affiliate.digika.com/reports/finance"
-                : cleanType === "customers"
-                ? "https://ro-affiliate.digika.com/reports/customers"
-                : "https://ro-affiliate.digika.com/reports/general";
+                await uF.click({ clickCount: 3 });
+                await uF.press('Backspace');
+                await uF.type(dashConfig.credentials.username, { delay: 100 });
 
-            await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null);
-            await new Promise(r => setTimeout(r, 8000));
-            logStep(5, `Report page: ${targetUrl}`, true);
+                await pF.click({ clickCount: 3 });
+                await pF.press('Backspace');
+                await pF.type(dashConfig.credentials.password, { delay: 100 });
+                logStep(3, "Credentials injected", true);
 
-            const dateOk = await applyDateFilter(page, resolvedMonth, response.logs);
-            logStep(6, `Date filter "${resolvedMonth}": ${dateOk ? 'OK' : 'check logs'}`, true);
-            await new Promise(r => setTimeout(r, 2000));
+                let submitBtn = null;
+                try {
+                    await page.waitForSelector(bSel, { visible: true, timeout: 10000 });
+                    submitBtn = await page.$(bSel);
+                } catch(e) {
+                    response.logs.push(`[DEBUG] Submit button not found: ${e.message}`);
+                    logStep(3.5, "Submit button not found", false);
+                    finish(false); return;
+                }
 
-            let rows = [];
-            if (cleanType === "customers") {
-                rows = await roAffiliateCustomers(page, resolvedMonth, response.logs);
-            } else {
-                rows = await roAffiliateGeneralFinance(page, resolvedMonth, response.logs);
+                await Promise.all([
+                    page.waitForNavigation({
+                        waitUntil: 'networkidle2', timeout: 60000
+                    }).catch(e => response.logs.push(`[DEBUG] Nav timeout: ${e.message}`)),
+                    submitBtn.click()
+                ]);
+                await new Promise(r => setTimeout(r, 10000));
+
+                const currentUrl = page.url().toLowerCase();
+                response.logs.push(`[DEBUG] Post-login URL: ${currentUrl}`);
+                if (currentUrl.includes('login') || currentUrl.includes('signin')) {
+                    logStep(4, `Login FAILED — still on login page: ${page.url()}`, false);
+                    finish(false); return;
+                }
+                logStep(4, `Logged in — URL: ${page.url()}`, true);
+
+                const cleanType = (reportTypeArg || '').toLowerCase().trim();
+                const targetUrl = cleanType === "finance"
+                    ? "https://ro-affiliate.digika.com/reports/finance"
+                    : cleanType === "customers"
+                    ? "https://ro-affiliate.digika.com/reports/customers"
+                    : "https://ro-affiliate.digika.com/reports/general";
+
+                await page.goto(targetUrl, {
+                    waitUntil: 'networkidle2', timeout: 60000
+                }).catch(e => response.logs.push(`[DEBUG] Report page nav error: ${e.message}`));
+                await new Promise(r => setTimeout(r, 8000));
+                response.logs.push(`[DEBUG] Report page URL: ${page.url()}`);
+                logStep(5, `Report page: ${targetUrl}`, true);
+
+                const dateOk = await applyDateFilter(page, resolvedMonth, response.logs);
+                logStep(6, `Date filter "${resolvedMonth}": ${dateOk ? 'OK' : 'check logs'}`, true);
+                await new Promise(r => setTimeout(r, 2000));
+
+                let rows = [];
+                if (cleanType === "customers") {
+                    rows = await roAffiliateCustomers(page, resolvedMonth, response.logs);
+                } else {
+                    rows = await roAffiliateGeneralFinance(page, resolvedMonth, response.logs);
+                }
+
+                response.logs.push(`[DEBUG] Harvested: ${rows.length} rows`);
+                if (!rows || rows.length === 0) {
+                    logStep(10, "No data found", false);
+                    finish(false); return;
+                }
+
+                const n = v => {
+                    if (v === undefined || v === null || v === '') return 0;
+                    const clean = String(v).replace(/[€$,]/g, '').replace('%', '').trim();
+                    const num = Number(clean); return isNaN(num) ? v : num;
+                };
+
+                let dataMatrix = rows.map((row, idx) => {
+                    if (idx === 0) return row;
+                    const r = [row[0] || ''];
+                    for (let i = 1; i < row.length; i++) r.push(n(row[i]));
+                    return r;
+                });
+
+                const now = new Date();
+                const monthNames = ["January","February","March","April","May","June",
+                    "July","August","September","October","November","December"];
+                const isCurrentMonth = resolvedMonth ===
+                    `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+                if (isCurrentMonth) {
+                    dataMatrix = filterRowsUpToToday(dataMatrix);
+                    response.logs.push(`[DEBUG] RO filtered to today: ${dataMatrix.length} rows`);
+                }
+
+                response.data = dataMatrix;
+                logStep(10, `Done rows: ${dataMatrix.length}`, dataMatrix.length > 1);
+                finish(dataMatrix.length > 1);
+
+            } catch(roErr) {
+                response.logs.push(`[RO_ERROR] ${roErr.message}`);
+                response.logs.push(`[RO_STACK] ${roErr.stack}`);
+                logStep(99, `RO_AFFILIATE crash: ${roErr.message}`, false);
+                finish(false);
             }
-
-            response.logs.push(`[DEBUG] Harvested: ${rows.length} rows`);
-            if (!rows || rows.length === 0) { logStep(10, "No data found", false); finish(false); return; }
-
-            const n = v => {
-                if (v === undefined || v === null || v === '') return 0;
-                const clean = String(v).replace(/[€$,]/g,'').replace('%','').trim();
-                const num = Number(clean); return isNaN(num) ? v : num;
-            };
-
-            let dataMatrix = rows.map((row, idx) => {
-                if (idx === 0) return row;
-                const r = [row[0] || ''];
-                for (let i = 1; i < row.length; i++) r.push(n(row[i]));
-                return r;
-            });
-
-            const now = new Date();
-            const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
-            const isCurrentMonth = resolvedMonth === `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
-            if (isCurrentMonth) { dataMatrix = filterRowsUpToToday(dataMatrix); response.logs.push(`[DEBUG] RO filtered to today: ${dataMatrix.length} rows`); }
-
-            response.data = dataMatrix;
-            logStep(10, `Done rows: ${dataMatrix.length}`, dataMatrix.length > 1);
-            finish(dataMatrix.length > 1);
         }
 
     } catch(e) {
