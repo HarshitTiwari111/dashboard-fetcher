@@ -925,11 +925,21 @@ async function rewardsAffiliateFetchTable(page, logs) {
                 ? "https://ro-affiliate.digika.com/reports/customers"
                 : "https://ro-affiliate.digika.com/reports/general";
 
-            await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null);
-            await new Promise(r => setTimeout(r, 6000));
-            logStep(5, `Report page: ${targetUrl}`, true);
+await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null);
+await new Promise(r => setTimeout(r, 10000)); // 6000 → 10000
 
-            const dateOk = await applyDateFilter(page, resolvedMonth, response.logs);
+// ✅ Extra wait — page ke buttons load hone do
+await page.waitForFunction(() => {
+    const btns = Array.from(document.querySelectorAll('button'));
+    return btns.some(b => {
+        const t = (b.innerText || '').trim().toLowerCase();
+        return t.includes('year') || t.includes('month') || t.includes('today') || t.includes('generate');
+    });
+}, { timeout: 20000 }).catch(() => null);
+
+logStep(5, `Report page: ${targetUrl}`, true);
+
+const dateOk = await applyDateFilter(page, resolvedMonth, response.logs);
             logStep(6, `Date filter "${resolvedMonth}": ${dateOk ? 'OK' : 'check logs'}`, true);
             await new Promise(r => setTimeout(r, 2000));
 
