@@ -798,40 +798,20 @@ async function rewardsAffiliateFetchTable(page, logs) {
 const { execSync } = require('child_process');
 
 // Chrome dhundo
-let chromePath = '';
-const searchPaths = [
-    '/usr/bin/google-chrome',
-    '/usr/bin/chromium-browser', 
-    '/usr/bin/chromium',
-    '/snap/bin/chromium'
-];
+// Chrome path find karo
+let chromePath;
+try {
+    const { execSync } = require('child_process');
+    const result = execSync('find /opt/render/.cache -name "chrome" 2>/dev/null | grep -v ".zip" | head -1').toString().trim();
+    if (result) chromePath = result;
+} catch(e) {}
 
-for (const p of searchPaths) {
-    try {
-        execSync(`test -f ${p}`);
-        chromePath = p;
-        break;
-    } catch(e) {}
-}
-
-// Render cache mein bhi dhundo
-if (!chromePath) {
-    try {
-        chromePath = execSync('find /opt/render/.cache/puppeteer -name "chrome" -type f 2>/dev/null | head -1').toString().trim();
-    } catch(e) {}
-}
-
-response.logs.push(`[DEBUG] Chrome path: "${chromePath}"`);
+response.logs.push(`[DEBUG] Chrome found at: "${chromePath || 'auto'}"`);
 
 browser = await puppeteer.launch({
     headless: true,
-    args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--window-size=1366,768'
-    ]
+    executablePath: chromePath || undefined,
+    args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage', '--disable-gpu']
 });
         page = await browser.newPage();
         await page.setViewport({ width: 1366, height: 768 });
