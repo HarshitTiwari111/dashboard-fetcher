@@ -1,4 +1,4 @@
-const puppeteer = require('puppeteer');
+const puppeteer = require('puppeteer-core');
 const fs = require('fs');
 
 const dashboardKey  = process.argv[2];
@@ -795,24 +795,44 @@ async function rewardsAffiliateFetchTable(page, logs) {
         logStep(0, "Load configuration", true);
         response.logs.push(`[DEBUG] monthArg raw="${monthArg}" resolved="${resolvedMonth}"`);
 const { execSync } = require('child_process');
-let chromePath;
-try {
-    chromePath = execSync('find /opt/render/.cache/puppeteer -name "chrome" -type f 2>/dev/null | head -1').toString().trim();
-} catch(e) { chromePath = null; }
 
-const launchOptions = {
-    headless: "new",
+// Chrome dhundo
+let chromePath = '';
+const searchPaths = [
+    '/usr/bin/google-chrome',
+    '/usr/bin/chromium-browser', 
+    '/usr/bin/chromium',
+    '/snap/bin/chromium'
+];
+
+for (const p of searchPaths) {
+    try {
+        execSync(`test -f ${p}`);
+        chromePath = p;
+        break;
+    } catch(e) {}
+}
+
+// Render cache mein bhi dhundo
+if (!chromePath) {
+    try {
+        chromePath = execSync('find /opt/render/.cache/puppeteer -name "chrome" -type f 2>/dev/null | head -1').toString().trim();
+    } catch(e) {}
+}
+
+response.logs.push(`[DEBUG] Chrome path: "${chromePath}"`);
+
+browser = await puppeteer.launch({
+    headless: true,
+    executablePath: chromePath || undefined,
     args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
-        '--disable-blink-features=AutomationControlled',
         '--disable-dev-shm-usage',
+        '--disable-gpu',
         '--window-size=1366,768'
     ]
-};
-if (chromePath) launchOptions.executablePath = chromePath;
-
-browser = await puppeteer.launch(launchOptions);
+});
         page = await browser.newPage();
         await page.setViewport({ width: 1366, height: 768 });
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
