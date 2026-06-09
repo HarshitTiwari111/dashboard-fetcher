@@ -77,8 +77,9 @@ app.post('/bridge', (req, res) => {
 
     const rawOutput = (stdout || '').trim();
     console.log('Raw output length:', rawOutput.length);
-    console.log('Raw output preview:', rawOutput.substring(0, 200));
-
+  console.log('Raw output preview:', rawOutput.substring(0, 200));
+console.log('Raw output LAST 200:', rawOutput.substring(rawOutput.length - 200));
+console.log('Raw output TOTAL LENGTH:', rawOutput.length);
     if (!rawOutput) {
       return res.json({
         success: false,
