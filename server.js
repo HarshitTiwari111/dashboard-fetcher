@@ -2,7 +2,7 @@ const express = require("express");
 const puppeteer = require("puppeteer");
 const fs = require("fs");
 const { google } = require("googleapis");
-const { exec } = require('child_process');
+const { exec, execSync } = require('child_process');
 const path = require('path');
 
 const app = express();
@@ -10,6 +10,15 @@ app.use(express.json({ limit: "10mb" }));
 
 const SHEET_ID = "1v4TBfbkFNISx33JWeqD-xZcedZRrf0OMow4u2VXLGIM";
 const SHEET_TAB = "Test";
+
+// ── AUTO INSTALL CHROME ON STARTUP ──
+console.log("Checking Chrome installation...");
+try {
+  execSync('npx puppeteer browsers install chrome', { stdio: 'inherit' });
+  console.log("Chrome install check complete!");
+} catch (e) {
+  console.log("Chrome install warning:", e.message);
+}
 
 async function getGoogleSheetsClient() {
   const credentials = JSON.parse(process.env.GOOGLE_SERVICE_ACCOUNT);
@@ -44,7 +53,7 @@ app.get("/", (req, res) => {
   res.send("Dashboard Fetcher Running");
 });
 
-// ── BRIDGE ROUTE (replaces bridge.php) ──
+// ── BRIDGE ROUTE ──
 app.post('/bridge', (req, res) => {
   const { dashboard, site, month, report_type } = req.body;
 
@@ -90,9 +99,8 @@ app.post("/fetch", async (req, res) => {
     console.log("==============================\n");
 
     browser = await puppeteer.launch({
-      headless: "new",
-      defaultViewport: null,
-      args: ["--start-maximized", "--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage"],
+      headless: true,
+      args: ["--no-sandbox", "--disable-setuid-sandbox", "--disable-dev-shm-usage", "--disable-gpu"],
     });
 
     const page = await browser.newPage();
@@ -127,8 +135,6 @@ app.post("/fetch", async (req, res) => {
       { waitUntil: "networkidle2", timeout: 60000 }
     );
     console.log("Report Page Opened");
-    console.log("Current URL:", page.url());
-    console.log("Title:", await page.title());
 
     const selects = await page.evaluate(() => {
       return Array.from(document.querySelectorAll("select")).map(s => ({
@@ -136,8 +142,7 @@ app.post("/fetch", async (req, res) => {
         name: s.name
       }));
     });
-    console.log("SELECT ELEMENTS:");
-    console.log(JSON.stringify(selects, null, 2));
+    console.log("SELECT ELEMENTS:", JSON.stringify(selects, null, 2));
 
     const casinoSelector =
       "#ctl00_ctl00_ContentPlaceHolderBody_ContentPlaceHolderBodyLI_ddlCasino";
@@ -189,13 +194,7 @@ app.post("/fetch", async (req, res) => {
     await new Promise((r) => setTimeout(r, 5000));
     await page.waitForNetworkIdle({ idleTime: 2000, timeout: 15000 }).catch(() => {});
 
-    console.log("Page URL:", page.url());
-    console.log("Page Title:", await page.title());
-
     const frames = page.frames();
-    console.log("\nTotal Frames on Page:", frames.length);
-    frames.forEach((f, i) => console.log(`  Frame ${i}: ${f.url()}`));
-
     let targetFrame = page.mainFrame();
     for (const frame of frames) {
       const url = frame.url();
@@ -203,10 +202,6 @@ app.post("/fetch", async (req, res) => {
         if (url !== page.url()) { targetFrame = frame; break; }
       }
     }
-
-    fs.writeFileSync("report-after-go.html", await page.content());
-    await page.screenshot({ path: "report-page.png", fullPage: true });
-    console.log("Saved report-after-go.html and report-page.png");
 
     const debugInfo = await targetFrame.evaluate(() => {
       const tables = document.querySelectorAll("table");
@@ -227,11 +222,6 @@ app.post("/fetch", async (req, res) => {
         };
       });
     });
-
-    console.log("\n==============================");
-    console.log("ALL TABLES ON PAGE:");
-    console.log("==============================");
-    console.log(JSON.stringify(debugInfo, null, 2));
 
     const data = await targetFrame.evaluate(() => {
       const keys = ["date","clicks","startedRegistrations","registrations","newBettors",
@@ -264,18 +254,8 @@ app.post("/fetch", async (req, res) => {
       return { rows: result, colCount: maxCols };
     });
 
-    console.log("\n==============================");
-    console.log("SCRAPED RESULT:");
-    console.log("==============================");
     console.log("Column Count:", data.colCount);
     console.log("Total Data Rows:", data.rows.length);
-
-    if (data.rows.length > 0) {
-      console.log("First Row:", JSON.stringify(data.rows[0], null, 2));
-      console.log("Last Row:", JSON.stringify(data.rows[data.rows.length - 1], null, 2));
-    } else {
-      console.log("NO DATA ROWS — check report-page.png and report-after-go.html");
-    }
 
     await browser.close();
     browser = null;
@@ -284,8 +264,6 @@ app.post("/fetch", async (req, res) => {
       console.log("\nWriting to Google Sheets...");
       await writeToGoogleSheet(data.rows);
       console.log("Google Sheets write complete!");
-    } else {
-      console.log("Skipping Sheets — no data rows found");
     }
 
     res.json({
@@ -299,7 +277,6 @@ app.post("/fetch", async (req, res) => {
 
   } catch (error) {
     console.error("\nERROR:", error.message);
-    console.error(error.stack);
     try { if (browser) await browser.close(); } catch (e) {}
     res.status(500).json({ success: false, error: error.message });
   }
