@@ -201,6 +201,9 @@ function filterRowsUpToToday(dataMatrix) {
 async function applyDateFilter(page, monthArg, logs) {
     logs.push(`[DEBUG] applyDateFilter: "${monthArg}"`);
     try {
+        // Page fully load hone do
+        await new Promise(r => setTimeout(r, 2000));
+
         const openResult = await page.evaluate(() => {
             const candidates = Array.from(document.querySelectorAll('button, [role="button"], div, span'));
             const dateBtn = candidates.find(el => {
@@ -337,7 +340,7 @@ async function applySplitBy(page, monthArg, logs) {
 }
 
 // ─────────────────────────────────────────────
-// TABLE EXTRACTOR — FIX: className SVGAnimatedString crash fixed
+// TABLE EXTRACTOR
 // ─────────────────────────────────────────────
 async function extractReportTable(page, logs) {
     logs.push(`[DEBUG] extractReportTable starting...`);
@@ -351,31 +354,27 @@ async function extractReportTable(page, logs) {
             roleRows: document.querySelectorAll('[role="row"]').length,
             trRows: document.querySelectorAll('tr').length,
             tdCells: document.querySelectorAll('td').length,
-            // Sample actual td text to see what data looks like
             sampleTd: Array.from(document.querySelectorAll('td')).slice(0,8).map(el => (el.innerText||'').trim())
         };
     });
     logs.push(`[DEBUG] Page info: ${JSON.stringify(pageInfo)}`);
 
-    // Scroll to trigger lazy load
     await page.evaluate(() => window.scrollBy(0, 400));
     await new Promise(r => setTimeout(r, 1000));
     await page.evaluate(() => window.scrollTo(0, 0));
     await new Promise(r => setTimeout(r, 500));
 
     const tableData = await page.evaluate(() => {
-        // ── SAFE className helper: handles SVGAnimatedString ──
         function safeClass(el) {
             try {
                 const cn = el.className;
                 if (!cn) return '';
                 if (typeof cn === 'string') return cn.toLowerCase();
-                if (cn.baseVal !== undefined) return String(cn.baseVal).toLowerCase(); // SVGAnimatedString
+                if (cn.baseVal !== undefined) return String(cn.baseVal).toLowerCase();
                 return String(cn).toLowerCase();
             } catch(e) { return ''; }
         }
 
-        // METHOD 1: role="grid" or role="table"
         const grid = document.querySelector('[role="grid"], [role="table"]');
         if (grid) {
             const rows = Array.from(grid.querySelectorAll('[role="row"]'));
@@ -386,7 +385,6 @@ async function extractReportTable(page, logs) {
             if (matrix.length > 1) return { method: 'role-grid', data: matrix };
         }
 
-        // METHOD 2: HTML <table> — best table by score
         const tables = Array.from(document.querySelectorAll('table'));
         if (tables.length > 0) {
             let bestTable = null, bestScore = 0;
@@ -410,7 +408,6 @@ async function extractReportTable(page, logs) {
             }
         }
 
-        // METHOD 3: Known header anchor
         const knownHeaders = ['month','day','date','clicks','uniq clicks','reg. count','ftd count',
             'deposits','turnovers','ngr','ttl reward','ttl paid','ttl balance',
             'registrations','bettors','revenue','commission','net revenue',
@@ -438,7 +435,6 @@ async function extractReportTable(page, logs) {
             }
         }
 
-        // METHOD 4: Positional — FIX: use safeClass instead of .className.toLowerCase()
         const rowsMap = new Map();
         Array.from(document.querySelectorAll('*')).forEach(el => {
             if (el.children.length !== 0) return;
@@ -450,7 +446,7 @@ async function extractReportTable(page, logs) {
                 const y = Math.round(rect.top / 10) * 10;
                 if (!rowsMap.has(y)) rowsMap.set(y, []);
                 rowsMap.get(y).push({ text: t, x: rect.left });
-            } catch(e) { /* skip elements that throw */ }
+            } catch(e) {}
         });
         const sortedY = Array.from(rowsMap.keys()).sort((a, b) => a - b);
         const matrix2 = [];
@@ -464,7 +460,6 @@ async function extractReportTable(page, logs) {
         });
         if (matrix2.length > 1) return { method: 'positional', data: matrix2 };
 
-        // Dump visible text for diagnosis
         const allText = Array.from(document.querySelectorAll('td, [role="cell"], [role="gridcell"]'))
             .map(el => (el.innerText || '').trim()).filter(t => t).slice(0, 30);
         return { method: 'none', data: [], allText };
@@ -489,7 +484,6 @@ async function extractReportTable(page, logs) {
 
 // ─────────────────────────────────────────────
 // RO_AFFILIATE — General / Finance
-// FIX: hasData check — Today ke liye rows >= 1 enough hai (not > 2)
 // ─────────────────────────────────────────────
 async function roAffiliateGeneralFinance(page, monthArg, logs) {
     logs.push(`[DEBUG] Flow: GENERAL/FINANCE`);
@@ -508,7 +502,6 @@ async function roAffiliateGeneralFinance(page, monthArg, logs) {
     });
     logs.push(`[DEBUG] Generate report clicked: ${clicked}`);
 
-    // ── FIXED: hasData check — any table with >= 1 data row is enough ──
     logs.push(`[DEBUG] Polling for data (up to 35s)...`);
     const pollStart = Date.now();
     let rows = [];
@@ -517,21 +510,17 @@ async function roAffiliateGeneralFinance(page, monthArg, logs) {
         await new Promise(r => setTimeout(r, 3000));
 
         const tableStatus = await page.evaluate(() => {
-            // Check role-based grid
             const grid = document.querySelector('[role="grid"], [role="table"]');
             if (grid) {
                 const dataRows = grid.querySelectorAll('[role="row"]');
                 if (dataRows.length >= 2) return { found: true, method: 'role-grid', count: dataRows.length };
             }
-            // Check HTML tables — ANY table with at least 2 tr rows
             const tables = Array.from(document.querySelectorAll('table'));
             for (const t of tables) {
                 const trCount = t.querySelectorAll('tr').length;
                 const tdCount = t.querySelectorAll('td').length;
-                // At least 1 header row + 1 data row, and has actual cell data
                 if (trCount >= 2 && tdCount >= 1) return { found: true, method: 'table', count: trCount };
             }
-            // Check if loading spinner visible
             const isLoading = Array.from(document.querySelectorAll('[class*="loading"], [class*="spinner"], [class*="skeleton"]')).some(el => {
                 try { return el.getBoundingClientRect().width > 0; } catch(e) { return false; }
             });
@@ -546,12 +535,10 @@ async function roAffiliateGeneralFinance(page, monthArg, logs) {
                 logs.push(`[DEBUG] Got ${rows.length} rows, done polling`);
                 break;
             }
-            // Table visible hai but extract nahi hua — thoda aur wait
             logs.push(`[DEBUG] Table found but extract returned ${rows.length} rows, retrying...`);
         }
     }
 
-    // Final attempt
     if (!rows || rows.length <= 1) {
         logs.push(`[DEBUG] Final extraction attempt after 5s...`);
         await new Promise(r => setTimeout(r, 5000));
@@ -651,33 +638,23 @@ async function extractCustomersTable(page, logs) {
     return result.data;
 }
 
+// ─────────────────────────────────────────────
+// CUSTOMERS FLOW — FIXED: login wait 15s → 5s
+// ─────────────────────────────────────────────
 async function roAffiliateCustomers(page, monthArg, logs) {
     logs.push(`[DEBUG] Flow: CUSTOMERS`);
 
-    // Date filter pehle apply karo
-    await applyDateFilter(page, monthArg, logs);
-    await new Promise(r => setTimeout(r, 2000));
-
-    // Generate report button - multiple selectors try karo
+    // Generate report click karo — date filter already main flow mein ho chuka hai
     const clicked = await page.evaluate(() => {
         const allBtns = Array.from(document.querySelectorAll('button'));
-        
-        // Exact match
         let btn = allBtns.find(b => (b.innerText || '').trim().toLowerCase() === 'generate report');
-        
-        // Partial match
         if (!btn) btn = allBtns.find(b => (b.innerText || '').trim().toLowerCase().includes('generate'));
-        
-        // Refresh icon wala button
-        if (!btn) btn = allBtns.find(b => {
-            const svg = b.querySelector('svg');
-            return svg && (b.innerText || '').trim() === '';
-        });
-
+        if (!btn) btn = allBtns.find(b => b.querySelector('svg') && (b.innerText || '').trim() === '');
         if (btn) { btn.click(); return true; }
         return false;
     });
     logs.push(`[DEBUG] Generate report clicked: ${clicked}`);
+
     const start = Date.now();
     let rows = [];
     while (Date.now() - start < 30000) {
@@ -687,7 +664,7 @@ async function roAffiliateCustomers(page, monthArg, logs) {
         logs.push(`[DEBUG] Still waiting... ${Math.round((Date.now()-start)/1000)}s`);
     }
     if (!rows || rows.length <= 1) {
-        await new Promise(r => setTimeout(r, 8000));
+        await new Promise(r => setTimeout(r, 5000));
         rows = await extractCustomersTable(page, logs);
     }
     return rows;
@@ -747,7 +724,6 @@ async function rewardsAffiliateFetchTable(page, logs) {
             if (row.every(c => c === '')) return;
             const firstCell = (row[0] || '').trim().toLowerCase();
             const inTfoot = tr.closest('tfoot') !== null;
-            // FIX: safeClass for SVG elements
             let trClass = '';
             try { const cn = tr.className; trClass = (typeof cn === 'string' ? cn : (cn && cn.baseVal) ? cn.baseVal : String(cn || '')).toLowerCase(); } catch(e) {}
             const isTotal = inTfoot || trClass.includes('total') || trClass.includes('summary') || trClass.includes('footer') ||
@@ -807,61 +783,52 @@ async function rewardsAffiliateFetchTable(page, logs) {
 (async () => {
     try {
         const config = process.env.CONFIG_JSON
-  ? JSON.parse(process.env.CONFIG_JSON)
-  : JSON.parse(fs.readFileSync('config.json', 'utf8'));
+            ? JSON.parse(process.env.CONFIG_JSON)
+            : JSON.parse(fs.readFileSync('config.json', 'utf8'));
         const dashConfig = config.dashboards[dashboardKey];
         if (!dashConfig) { logStep(0, "Load configuration", false); throw new Error(`Dashboard '${dashboardKey}' not found`); }
         logStep(0, "Load configuration", true);
         response.logs.push(`[DEBUG] monthArg raw="${monthArg}" resolved="${resolvedMonth}"`);
-const { execSync } = require('child_process');
 
-// Chrome dhundo
-// Chrome path find karo - exact executable
-let chromePath;
-try {
-    const { execSync } = require('child_process');
-    const result = execSync(
-        'find /opt/render/.cache/puppeteer -name "chrome" -type f ! -name "*.zip" 2>/dev/null | head -1'
-    ).toString().trim();
-    if (result) chromePath = result;
-} catch(e) { chromePath = null; }
+        const { execSync } = require('child_process');
+        let chromePath;
+        try {
+            const result = execSync(
+                'find /opt/render/.cache/puppeteer -name "chrome" -type f ! -name "*.zip" 2>/dev/null | head -1'
+            ).toString().trim();
+            if (result) chromePath = result;
+        } catch(e) { chromePath = null; }
 
-response.logs.push(`[DEBUG] Chrome found at: "${chromePath || 'auto'}"`);
+        response.logs.push(`[DEBUG] Chrome found at: "${chromePath || 'auto'}"`);
 
-browser = await puppeteer.launch({
-    headless: true,
-    executablePath: chromePath || undefined,
-    args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--disable-gpu',
-        '--disable-web-security',
-        '--disable-features=IsolateOrigins,site-per-process',
-        '--disable-extensions',
-        '--disable-background-networking',
-        '--disable-default-apps',
-        '--disable-sync',
-        '--disable-translate',
-        '--hide-scrollbars',
-        '--metrics-recording-only',
-        '--mute-audio',
-        '--no-first-run',
-        '--safebrowsing-disable-auto-update',
-        '--single-process'
-    ],
-    timeout: 60000
-});
+        browser = await puppeteer.launch({
+            headless: true,
+            executablePath: chromePath || undefined,
+            args: [
+                '--no-sandbox',
+                '--disable-setuid-sandbox',
+                '--disable-dev-shm-usage',
+                '--disable-gpu',
+                '--single-process',
+                '--no-zygote',
+                '--disable-extensions',
+                '--disable-background-networking',
+                '--no-first-run',
+                '--mute-audio'
+            ],
+            timeout: 60000
+        });
+
         page = await browser.newPage();
         await page.setViewport({ width: 1366, height: 768 });
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
-        page.setDefaultNavigationTimeout(90000);
-        page.setDefaultTimeout(90000);
+        page.setDefaultNavigationTimeout(60000);
+        page.setDefaultTimeout(60000);
         logStep(1, "Browser launched", true);
 
         if (dashboardKey === "rewards_affiliates") {
             await page.goto(dashConfig.login_url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
-            await new Promise(r => setTimeout(r, 12000));
+            await new Promise(r => setTimeout(r, 8000));
             logStep(2, "Login page loaded", true);
 
             const frames = page.frames();
@@ -884,12 +851,12 @@ browser = await puppeteer.launch({
                 page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null),
                 targetFrame.click(submitSel)
             ]);
-            await new Promise(r => setTimeout(r, 10000));
+            await new Promise(r => setTimeout(r, 8000));
             if (page.url().toLowerCase().includes('login')) { logStep(4, "Login FAILED", false); finish(false); return; }
             logStep(4, "Login success", true);
 
             await page.goto(dashConfig.report_url, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null);
-            await new Promise(r => setTimeout(r, 10000));
+            await new Promise(r => setTimeout(r, 8000));
             logStep(5, `Report page: ${page.url()}`, true);
 
             try {
@@ -913,30 +880,30 @@ browser = await puppeteer.launch({
             finish(dataMatrix.length > 1);
 
         } else {
-            // RO_AFFILIATE
-            await page.goto(dashConfig.login_url, { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => null);
-await new Promise(r => setTimeout(r, 15000)); 
+            // RO_AFFILIATE — FIXED: 15000 → 5000
+            await page.goto(dashConfig.login_url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
+            await new Promise(r => setTimeout(r, 5000));
             logStep(2, "Login page loaded", true);
 
             const uSel = 'input[type="text"], input[type="email"], input[id*="username"]';
             const pSel = 'input[type="password"]';
             const bSel = 'button[type="submit"], input[type="submit"]';
 
-            await page.waitForSelector(uSel, { visible: true, timeout: 35000 });
+            await page.waitForSelector(uSel, { visible: true, timeout: 20000 });
             const uF = await page.$(uSel);
             await uF.click({ clickCount: 3 }); await uF.press('Backspace');
-            await uF.type(dashConfig.credentials.username, { delay: 100 });
-            await page.waitForSelector(pSel, { visible: true, timeout: 15000 });
+            await uF.type(dashConfig.credentials.username, { delay: 80 });
+            await page.waitForSelector(pSel, { visible: true, timeout: 10000 });
             const pF = await page.$(pSel);
             await pF.click({ clickCount: 3 }); await pF.press('Backspace');
-            await pF.type(dashConfig.credentials.password, { delay: 100 });
+            await pF.type(dashConfig.credentials.password, { delay: 80 });
             logStep(3, "Credentials injected", true);
 
             await Promise.all([
                 page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null),
                 page.click(bSel)
             ]);
-            await new Promise(r => setTimeout(r, 10000));
+            await new Promise(r => setTimeout(r, 5000));
             logStep(4, "Logged in", true);
 
             const cleanType = (reportTypeArg || '').toLowerCase().trim();
@@ -947,7 +914,7 @@ await new Promise(r => setTimeout(r, 15000));
                 : "https://ro-affiliate.digika.com/reports/general";
 
             await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null);
-            await new Promise(r => setTimeout(r, 8000));
+            await new Promise(r => setTimeout(r, 6000));
             logStep(5, `Report page: ${targetUrl}`, true);
 
             const dateOk = await applyDateFilter(page, resolvedMonth, response.logs);
