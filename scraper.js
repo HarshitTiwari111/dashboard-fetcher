@@ -795,10 +795,19 @@ async function rewardsAffiliateFetchTable(page, logs) {
         logStep(0, "Load configuration", true);
         response.logs.push(`[DEBUG] monthArg raw="${monthArg}" resolved="${resolvedMonth}"`);
 
-        browser = await puppeteer.launch({
-            headless: config.server.headless ? "new" : false,
-            args: ['--no-sandbox','--disable-setuid-sandbox','--disable-blink-features=AutomationControlled','--window-size=1366,768']
-        });
+        const puppeteer = require('puppeteer');
+
+browser = await puppeteer.launch({
+    headless: "new",
+    executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || puppeteer.executablePath(),
+    args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-blink-features=AutomationControlled',
+        '--disable-dev-shm-usage',
+        '--window-size=1366,768'
+    ]
+});
         page = await browser.newPage();
         await page.setViewport({ width: 1366, height: 768 });
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
