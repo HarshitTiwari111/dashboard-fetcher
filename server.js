@@ -321,6 +321,38 @@ app.post("/fetch", async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
+// ── TEMPORARY DEBUG ROUTE ──
+app.get('/debug-ro', (req, res) => {
+  const scraperPath = path.join(__dirname, 'scraper.js');
+  const command = `node "${scraperPath}" "RO_AFFILIATE" "All Sites" "Current month" "General"`;
+  
+  console.log('DEBUG: Running command:', command);
+  console.log('DEBUG: CONFIG_JSON present:', !!process.env.CONFIG_JSON);
+  
+  let configTest = 'FAILED';
+  try {
+    const cfg = JSON.parse(process.env.CONFIG_JSON || '{}');
+    configTest = 'OK - dashboards: ' + Object.keys(cfg.dashboards || {}).join(', ');
+  } catch(e) {
+    configTest = 'PARSE ERROR: ' + e.message;
+  }
+
+  exec(command, { 
+    timeout: 120000, 
+    maxBuffer: 1024 * 1024 * 10 
+  }, (error, stdout, stderr) => {
+    res.json({
+      config_test: configTest,
+      error: error ? {
+        message: error.message,
+        killed: error.killed,
+        code: error.code
+      } : null,
+      stderr: stderr ? stderr.substring(0, 500) : null,
+      stdout_preview: (stdout || '').substring(0, 2000)
+    });
+  });
+});
 
 // ── START SERVER ──
 app.listen(process.env.PORT || 3000, () => {
