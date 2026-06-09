@@ -882,8 +882,8 @@ browser = await puppeteer.launch({
 
         } else {
             // RO_AFFILIATE
-            await page.goto(dashConfig.login_url, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null);
-            await new Promise(r => setTimeout(r, 10000));
+            await page.goto(dashConfig.login_url, { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => null);
+await new Promise(r => setTimeout(r, 15000)); 
             logStep(2, "Login page loaded", true);
 
             const uSel = 'input[type="text"], input[type="email"], input[id*="username"]';
