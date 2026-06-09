@@ -1,21 +1,4 @@
-// ── TOP-LEVEL CRASH HANDLERS — sabse pehle ──
-process.on('uncaughtException', e => {
-    process.stdout.write(JSON.stringify({
-        success: false,
-        logs: [`[UNCAUGHT] ${e.message}`, `[STACK] ${e.stack}`],
-        data: []
-    }) + '\n');
-    process.exit(0);
-});
-process.on('unhandledRejection', (reason) => {
-    process.stdout.write(JSON.stringify({
-        success: false,
-        logs: [`[UNHANDLED_REJECTION] ${String(reason)}`],
-        data: []
-    }) + '\n');
-    process.exit(0);
-});
-
+// ✅ puppeteer-core nahi, puppeteer use karo
 const puppeteer = require('puppeteer');
 const fs = require('fs');
 
@@ -52,13 +35,10 @@ let page    = null;
 function logStep(stepNum, description, isSuccess) {
     response.logs.push(`[STEP ${stepNum}] ${description} — ${isSuccess ? "SUCCESS" : "FAILED"}`);
 }
-
 function finish(success) {
     response.success = success;
-    const out = JSON.stringify(response);
-    process.stdout.write(out + '\n', () => {
-        process.exit(0);
-    });
+    console.log(JSON.stringify(response));
+    process.exit(0);
 }
 
 // ─────────────────────────────────────────────
@@ -357,7 +337,7 @@ async function applySplitBy(page, monthArg, logs) {
 }
 
 // ─────────────────────────────────────────────
-// TABLE EXTRACTOR
+// TABLE EXTRACTOR — FIX: className SVGAnimatedString crash fixed
 // ─────────────────────────────────────────────
 async function extractReportTable(page, logs) {
     logs.push(`[DEBUG] extractReportTable starting...`);
@@ -371,27 +351,31 @@ async function extractReportTable(page, logs) {
             roleRows: document.querySelectorAll('[role="row"]').length,
             trRows: document.querySelectorAll('tr').length,
             tdCells: document.querySelectorAll('td').length,
+            // Sample actual td text to see what data looks like
             sampleTd: Array.from(document.querySelectorAll('td')).slice(0,8).map(el => (el.innerText||'').trim())
         };
     });
     logs.push(`[DEBUG] Page info: ${JSON.stringify(pageInfo)}`);
 
+    // Scroll to trigger lazy load
     await page.evaluate(() => window.scrollBy(0, 400));
     await new Promise(r => setTimeout(r, 1000));
     await page.evaluate(() => window.scrollTo(0, 0));
     await new Promise(r => setTimeout(r, 500));
 
     const tableData = await page.evaluate(() => {
+        // ── SAFE className helper: handles SVGAnimatedString ──
         function safeClass(el) {
             try {
                 const cn = el.className;
                 if (!cn) return '';
                 if (typeof cn === 'string') return cn.toLowerCase();
-                if (cn.baseVal !== undefined) return String(cn.baseVal).toLowerCase();
+                if (cn.baseVal !== undefined) return String(cn.baseVal).toLowerCase(); // SVGAnimatedString
                 return String(cn).toLowerCase();
             } catch(e) { return ''; }
         }
 
+        // METHOD 1: role="grid" or role="table"
         const grid = document.querySelector('[role="grid"], [role="table"]');
         if (grid) {
             const rows = Array.from(grid.querySelectorAll('[role="row"]'));
@@ -402,6 +386,7 @@ async function extractReportTable(page, logs) {
             if (matrix.length > 1) return { method: 'role-grid', data: matrix };
         }
 
+        // METHOD 2: HTML <table> — best table by score
         const tables = Array.from(document.querySelectorAll('table'));
         if (tables.length > 0) {
             let bestTable = null, bestScore = 0;
@@ -425,6 +410,7 @@ async function extractReportTable(page, logs) {
             }
         }
 
+        // METHOD 3: Known header anchor
         const knownHeaders = ['month','day','date','clicks','uniq clicks','reg. count','ftd count',
             'deposits','turnovers','ngr','ttl reward','ttl paid','ttl balance',
             'registrations','bettors','revenue','commission','net revenue',
@@ -452,6 +438,7 @@ async function extractReportTable(page, logs) {
             }
         }
 
+        // METHOD 4: Positional — FIX: use safeClass instead of .className.toLowerCase()
         const rowsMap = new Map();
         Array.from(document.querySelectorAll('*')).forEach(el => {
             if (el.children.length !== 0) return;
@@ -463,7 +450,7 @@ async function extractReportTable(page, logs) {
                 const y = Math.round(rect.top / 10) * 10;
                 if (!rowsMap.has(y)) rowsMap.set(y, []);
                 rowsMap.get(y).push({ text: t, x: rect.left });
-            } catch(e) {}
+            } catch(e) { /* skip elements that throw */ }
         });
         const sortedY = Array.from(rowsMap.keys()).sort((a, b) => a - b);
         const matrix2 = [];
@@ -477,6 +464,7 @@ async function extractReportTable(page, logs) {
         });
         if (matrix2.length > 1) return { method: 'positional', data: matrix2 };
 
+        // Dump visible text for diagnosis
         const allText = Array.from(document.querySelectorAll('td, [role="cell"], [role="gridcell"]'))
             .map(el => (el.innerText || '').trim()).filter(t => t).slice(0, 30);
         return { method: 'none', data: [], allText };
@@ -501,6 +489,7 @@ async function extractReportTable(page, logs) {
 
 // ─────────────────────────────────────────────
 // RO_AFFILIATE — General / Finance
+// FIX: hasData check — Today ke liye rows >= 1 enough hai (not > 2)
 // ─────────────────────────────────────────────
 async function roAffiliateGeneralFinance(page, monthArg, logs) {
     logs.push(`[DEBUG] Flow: GENERAL/FINANCE`);
@@ -519,6 +508,7 @@ async function roAffiliateGeneralFinance(page, monthArg, logs) {
     });
     logs.push(`[DEBUG] Generate report clicked: ${clicked}`);
 
+    // ── FIXED: hasData check — any table with >= 1 data row is enough ──
     logs.push(`[DEBUG] Polling for data (up to 35s)...`);
     const pollStart = Date.now();
     let rows = [];
@@ -527,17 +517,21 @@ async function roAffiliateGeneralFinance(page, monthArg, logs) {
         await new Promise(r => setTimeout(r, 3000));
 
         const tableStatus = await page.evaluate(() => {
+            // Check role-based grid
             const grid = document.querySelector('[role="grid"], [role="table"]');
             if (grid) {
                 const dataRows = grid.querySelectorAll('[role="row"]');
                 if (dataRows.length >= 2) return { found: true, method: 'role-grid', count: dataRows.length };
             }
+            // Check HTML tables — ANY table with at least 2 tr rows
             const tables = Array.from(document.querySelectorAll('table'));
             for (const t of tables) {
                 const trCount = t.querySelectorAll('tr').length;
                 const tdCount = t.querySelectorAll('td').length;
+                // At least 1 header row + 1 data row, and has actual cell data
                 if (trCount >= 2 && tdCount >= 1) return { found: true, method: 'table', count: trCount };
             }
+            // Check if loading spinner visible
             const isLoading = Array.from(document.querySelectorAll('[class*="loading"], [class*="spinner"], [class*="skeleton"]')).some(el => {
                 try { return el.getBoundingClientRect().width > 0; } catch(e) { return false; }
             });
@@ -552,10 +546,12 @@ async function roAffiliateGeneralFinance(page, monthArg, logs) {
                 logs.push(`[DEBUG] Got ${rows.length} rows, done polling`);
                 break;
             }
+            // Table visible hai but extract nahi hua — thoda aur wait
             logs.push(`[DEBUG] Table found but extract returned ${rows.length} rows, retrying...`);
         }
     }
 
+    // Final attempt
     if (!rows || rows.length <= 1) {
         logs.push(`[DEBUG] Final extraction attempt after 5s...`);
         await new Promise(r => setTimeout(r, 5000));
@@ -733,6 +729,7 @@ async function rewardsAffiliateFetchTable(page, logs) {
             if (row.every(c => c === '')) return;
             const firstCell = (row[0] || '').trim().toLowerCase();
             const inTfoot = tr.closest('tfoot') !== null;
+            // FIX: safeClass for SVG elements
             let trClass = '';
             try { const cn = tr.className; trClass = (typeof cn === 'string' ? cn : (cn && cn.baseVal) ? cn.baseVal : String(cn || '')).toLowerCase(); } catch(e) {}
             const isTotal = inTfoot || trClass.includes('total') || trClass.includes('summary') || trClass.includes('footer') ||
@@ -792,68 +789,37 @@ async function rewardsAffiliateFetchTable(page, logs) {
 (async () => {
     try {
         const config = process.env.CONFIG_JSON
-            ? JSON.parse(process.env.CONFIG_JSON)
-            : JSON.parse(fs.readFileSync('config.json', 'utf8'));
-
+  ? JSON.parse(process.env.CONFIG_JSON)
+  : JSON.parse(fs.readFileSync('config.json', 'utf8'));
         const dashConfig = config.dashboards[dashboardKey];
-        if (!dashConfig) {
-            logStep(0, "Load configuration", false);
-            throw new Error(`Dashboard '${dashboardKey}' not found`);
-        }
+        if (!dashConfig) { logStep(0, "Load configuration", false); throw new Error(`Dashboard '${dashboardKey}' not found`); }
         logStep(0, "Load configuration", true);
         response.logs.push(`[DEBUG] monthArg raw="${monthArg}" resolved="${resolvedMonth}"`);
+const { execSync } = require('child_process');
 
-        // ── ROBUST Chrome path finder ──
-        const { execSync } = require('child_process');
-        let chromePath = null;
-        const chromeCmds = [
-            'find /opt/render/.cache/puppeteer -name "chrome" -not -name "*.zip" -type f 2>/dev/null | head -1',
-            'find /opt/render/.cache/puppeteer -name "chrome-linux" -type f 2>/dev/null | head -1',
-            'which chromium-browser 2>/dev/null',
-            'which google-chrome 2>/dev/null',
-            'which chromium 2>/dev/null'
-        ];
-        for (const cmd of chromeCmds) {
-            try {
-                const r = execSync(cmd, { timeout: 5000 }).toString().trim();
-                if (r) { chromePath = r; break; }
-            } catch(_) {}
-        }
-        response.logs.push(`[DEBUG] Chrome path: "${chromePath || 'puppeteer-auto'}"`);
+// Chrome dhundo
+// Chrome path find karo - exact executable
+let chromePath;
+try {
+    const { execSync } = require('child_process');
+    const result = execSync(
+        'find /opt/render/.cache/puppeteer -name "chrome" -type f ! -name "*.zip" 2>/dev/null | head -1'
+    ).toString().trim();
+    if (result) chromePath = result;
+} catch(e) { chromePath = null; }
 
-        // ── Launch with fallback ──
-        const launchArgs = [
-            '--no-sandbox',
-            '--disable-setuid-sandbox',
-            '--disable-dev-shm-usage',
-            '--disable-gpu',
-            '--single-process',
-            '--no-zygote'
-        ];
+response.logs.push(`[DEBUG] Chrome found at: "${chromePath || 'auto'}"`);
 
-        try {
-            browser = await puppeteer.launch({
-                headless: true,
-                executablePath: chromePath || undefined,
-                args: launchArgs
-            });
-            response.logs.push(`[DEBUG] Browser launched OK (attempt 1)`);
-        } catch(e1) {
-            response.logs.push(`[DEBUG] Launch attempt 1 failed: ${e1.message}`);
-            try {
-                browser = await puppeteer.launch({
-                    headless: true,
-                    args: launchArgs
-                });
-                response.logs.push(`[DEBUG] Browser launched OK (attempt 2 - auto path)`);
-            } catch(e2) {
-                response.logs.push(`[DEBUG] Launch attempt 2 failed: ${e2.message}`);
-                logStep(1, `Browser launch FAILED: ${e2.message}`, false);
-                finish(false);
-                return;
-            }
-        }
-
+browser = await puppeteer.launch({
+    headless: true,
+    executablePath: chromePath || undefined,
+    args: [
+        '--no-sandbox',
+        '--disable-setuid-sandbox',
+        '--disable-dev-shm-usage',
+        '--disable-gpu'
+    ]
+});
         page = await browser.newPage();
         await page.setViewport({ width: 1366, height: 768 });
         await page.setUserAgent('Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36');
@@ -861,9 +827,6 @@ async function rewardsAffiliateFetchTable(page, logs) {
         page.setDefaultTimeout(90000);
         logStep(1, "Browser launched", true);
 
-        // ══════════════════════════════════════
-        // REWARDS AFFILIATES
-        // ══════════════════════════════════════
         if (dashboardKey === "rewards_affiliates") {
             await page.goto(dashConfig.login_url, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => null);
             await new Promise(r => setTimeout(r, 12000));
@@ -898,7 +861,7 @@ async function rewardsAffiliateFetchTable(page, logs) {
             logStep(5, `Report page: ${page.url()}`, true);
 
             try {
-                await rewardsApplyFilters(page, site, resolvedMonth, response.logs);
+                const filterRes = await rewardsApplyFilters(page, site, resolvedMonth, response.logs);
                 logStep(6, `Filters applied`, true);
             } catch(e) { logStep(6, `Filter error: ${e.message}`, false); }
 
@@ -917,141 +880,79 @@ async function rewardsAffiliateFetchTable(page, logs) {
             logStep(10, `Done rows: ${dataMatrix.length}`, dataMatrix.length > 1);
             finish(dataMatrix.length > 1);
 
-        // ══════════════════════════════════════
-        // RO_AFFILIATE
-        // ══════════════════════════════════════
         } else {
-            try {
-                await page.goto(dashConfig.login_url, {
-                    waitUntil: 'networkidle2', timeout: 90000
-                }).catch(() => null);
-                await new Promise(r => setTimeout(r, 15000));
-                logStep(2, "Login page loaded", true);
-                response.logs.push(`[DEBUG] Login URL: ${page.url()}`);
+            // RO_AFFILIATE
+            await page.goto(dashConfig.login_url, { waitUntil: 'networkidle2', timeout: 90000 }).catch(() => null);
+await new Promise(r => setTimeout(r, 15000)); 
+            logStep(2, "Login page loaded", true);
 
-                const uSel = 'input[type="text"], input[type="email"], input[id*="username"]';
-                const pSel = 'input[type="password"]';
-                const bSel = 'button[type="submit"], input[type="submit"]';
+            const uSel = 'input[type="text"], input[type="email"], input[id*="username"]';
+            const pSel = 'input[type="password"]';
+            const bSel = 'button[type="submit"], input[type="submit"]';
 
-                let uF = null;
-                try {
-                    await page.waitForSelector(uSel, { visible: true, timeout: 35000 });
-                    uF = await page.$(uSel);
-                } catch(e) {
-                    response.logs.push(`[DEBUG] Username field not found: ${e.message}`);
-                    logStep(3, "Username field not found", false);
-                    finish(false); return;
-                }
+            await page.waitForSelector(uSel, { visible: true, timeout: 35000 });
+            const uF = await page.$(uSel);
+            await uF.click({ clickCount: 3 }); await uF.press('Backspace');
+            await uF.type(dashConfig.credentials.username, { delay: 100 });
+            await page.waitForSelector(pSel, { visible: true, timeout: 15000 });
+            const pF = await page.$(pSel);
+            await pF.click({ clickCount: 3 }); await pF.press('Backspace');
+            await pF.type(dashConfig.credentials.password, { delay: 100 });
+            logStep(3, "Credentials injected", true);
 
-                let pF = null;
-                try {
-                    await page.waitForSelector(pSel, { visible: true, timeout: 15000 });
-                    pF = await page.$(pSel);
-                } catch(e) {
-                    response.logs.push(`[DEBUG] Password field not found: ${e.message}`);
-                    logStep(3, "Password field not found", false);
-                    finish(false); return;
-                }
+            await Promise.all([
+                page.waitForNavigation({ waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null),
+                page.click(bSel)
+            ]);
+            await new Promise(r => setTimeout(r, 10000));
+            logStep(4, "Logged in", true);
 
-                await uF.click({ clickCount: 3 });
-                await uF.press('Backspace');
-                await uF.type(dashConfig.credentials.username, { delay: 100 });
+            const cleanType = (reportTypeArg || '').toLowerCase().trim();
+            const targetUrl = cleanType === "finance"
+                ? "https://ro-affiliate.digika.com/reports/finance"
+                : cleanType === "customers"
+                ? "https://ro-affiliate.digika.com/reports/customers"
+                : "https://ro-affiliate.digika.com/reports/general";
 
-                await pF.click({ clickCount: 3 });
-                await pF.press('Backspace');
-                await pF.type(dashConfig.credentials.password, { delay: 100 });
-                logStep(3, "Credentials injected", true);
+            await page.goto(targetUrl, { waitUntil: 'networkidle2', timeout: 60000 }).catch(() => null);
+            await new Promise(r => setTimeout(r, 8000));
+            logStep(5, `Report page: ${targetUrl}`, true);
 
-                let submitBtn = null;
-                try {
-                    await page.waitForSelector(bSel, { visible: true, timeout: 10000 });
-                    submitBtn = await page.$(bSel);
-                } catch(e) {
-                    response.logs.push(`[DEBUG] Submit button not found: ${e.message}`);
-                    logStep(3.5, "Submit button not found", false);
-                    finish(false); return;
-                }
+            const dateOk = await applyDateFilter(page, resolvedMonth, response.logs);
+            logStep(6, `Date filter "${resolvedMonth}": ${dateOk ? 'OK' : 'check logs'}`, true);
+            await new Promise(r => setTimeout(r, 2000));
 
-                await Promise.all([
-                    page.waitForNavigation({
-                        waitUntil: 'networkidle2', timeout: 60000
-                    }).catch(e => response.logs.push(`[DEBUG] Nav timeout: ${e.message}`)),
-                    submitBtn.click()
-                ]);
-                await new Promise(r => setTimeout(r, 10000));
-
-                const currentUrl = page.url().toLowerCase();
-                response.logs.push(`[DEBUG] Post-login URL: ${currentUrl}`);
-                if (currentUrl.includes('login') || currentUrl.includes('signin')) {
-                    logStep(4, `Login FAILED — still on login page: ${page.url()}`, false);
-                    finish(false); return;
-                }
-                logStep(4, `Logged in — URL: ${page.url()}`, true);
-
-                const cleanType = (reportTypeArg || '').toLowerCase().trim();
-                const targetUrl = cleanType === "finance"
-                    ? "https://ro-affiliate.digika.com/reports/finance"
-                    : cleanType === "customers"
-                    ? "https://ro-affiliate.digika.com/reports/customers"
-                    : "https://ro-affiliate.digika.com/reports/general";
-
-                await page.goto(targetUrl, {
-                    waitUntil: 'networkidle2', timeout: 60000
-                }).catch(e => response.logs.push(`[DEBUG] Report page nav error: ${e.message}`));
-                await new Promise(r => setTimeout(r, 8000));
-                response.logs.push(`[DEBUG] Report page URL: ${page.url()}`);
-                logStep(5, `Report page: ${targetUrl}`, true);
-
-                const dateOk = await applyDateFilter(page, resolvedMonth, response.logs);
-                logStep(6, `Date filter "${resolvedMonth}": ${dateOk ? 'OK' : 'check logs'}`, true);
-                await new Promise(r => setTimeout(r, 2000));
-
-                let rows = [];
-                if (cleanType === "customers") {
-                    rows = await roAffiliateCustomers(page, resolvedMonth, response.logs);
-                } else {
-                    rows = await roAffiliateGeneralFinance(page, resolvedMonth, response.logs);
-                }
-
-                response.logs.push(`[DEBUG] Harvested: ${rows.length} rows`);
-                if (!rows || rows.length === 0) {
-                    logStep(10, "No data found", false);
-                    finish(false); return;
-                }
-
-                const n = v => {
-                    if (v === undefined || v === null || v === '') return 0;
-                    const clean = String(v).replace(/[€$,]/g, '').replace('%', '').trim();
-                    const num = Number(clean); return isNaN(num) ? v : num;
-                };
-
-                let dataMatrix = rows.map((row, idx) => {
-                    if (idx === 0) return row;
-                    const r = [row[0] || ''];
-                    for (let i = 1; i < row.length; i++) r.push(n(row[i]));
-                    return r;
-                });
-
-                const now = new Date();
-                const monthNames = ["January","February","March","April","May","June",
-                    "July","August","September","October","November","December"];
-                const isCurrentMonth = resolvedMonth ===
-                    `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
-                if (isCurrentMonth) {
-                    dataMatrix = filterRowsUpToToday(dataMatrix);
-                    response.logs.push(`[DEBUG] RO filtered to today: ${dataMatrix.length} rows`);
-                }
-
-                response.data = dataMatrix;
-                logStep(10, `Done rows: ${dataMatrix.length}`, dataMatrix.length > 1);
-                finish(dataMatrix.length > 1);
-
-            } catch(roErr) {
-                response.logs.push(`[RO_ERROR] ${roErr.message}`);
-                response.logs.push(`[RO_STACK] ${roErr.stack}`);
-                logStep(99, `RO_AFFILIATE crash: ${roErr.message}`, false);
-                finish(false);
+            let rows = [];
+            if (cleanType === "customers") {
+                rows = await roAffiliateCustomers(page, resolvedMonth, response.logs);
+            } else {
+                rows = await roAffiliateGeneralFinance(page, resolvedMonth, response.logs);
             }
+
+            response.logs.push(`[DEBUG] Harvested: ${rows.length} rows`);
+            if (!rows || rows.length === 0) { logStep(10, "No data found", false); finish(false); return; }
+
+            const n = v => {
+                if (v === undefined || v === null || v === '') return 0;
+                const clean = String(v).replace(/[€$,]/g,'').replace('%','').trim();
+                const num = Number(clean); return isNaN(num) ? v : num;
+            };
+
+            let dataMatrix = rows.map((row, idx) => {
+                if (idx === 0) return row;
+                const r = [row[0] || ''];
+                for (let i = 1; i < row.length; i++) r.push(n(row[i]));
+                return r;
+            });
+
+            const now = new Date();
+            const monthNames = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+            const isCurrentMonth = resolvedMonth === `${monthNames[now.getMonth()]} ${now.getFullYear()}`;
+            if (isCurrentMonth) { dataMatrix = filterRowsUpToToday(dataMatrix); response.logs.push(`[DEBUG] RO filtered to today: ${dataMatrix.length} rows`); }
+
+            response.data = dataMatrix;
+            logStep(10, `Done rows: ${dataMatrix.length}`, dataMatrix.length > 1);
+            finish(dataMatrix.length > 1);
         }
 
     } catch(e) {
