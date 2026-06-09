@@ -67,31 +67,30 @@ app.post('/bridge', (req, res) => {
 
   console.log('Running:', command);
 
-  // ✅ Timeout 3 min + maxBuffer 10MB
-  exec(command, { timeout: 180000, maxBuffer: 1024 * 1024 * 10 }, (error, stdout, stderr) => {
-    
+  exec(command, { timeout: 240000, maxBuffer: 1024 * 1024 * 50 }, (error, stdout, stderr) => {
+
     if (error) {
       console.log('Exec error:', error.message);
-      console.log('Stderr:', stderr ? stderr.substring(0, 300) : 'none');
+      console.log('Killed:', error.killed);
     }
+    if (stderr) console.log('Stderr:', stderr.substring(0, 300));
 
     const rawOutput = (stdout || '').trim();
     console.log('Raw output length:', rawOutput.length);
-  console.log('Raw output preview:', rawOutput.substring(0, 200));
-console.log('Raw output LAST 200:', rawOutput.substring(rawOutput.length - 200));
-console.log('Raw output TOTAL LENGTH:', rawOutput.length);
+    console.log('Raw output preview:', rawOutput.substring(0, 300));
+
     if (!rawOutput) {
       return res.json({
         success: false,
         logs: [
           '[BRIDGE] Scraper ne koi output nahi diya.',
           '[BRIDGE] Error: ' + (error ? error.message : 'Unknown'),
+          '[BRIDGE] Killed: ' + (error && error.killed ? 'YES - timeout' : 'no'),
           '[BRIDGE] Stderr: ' + (stderr ? stderr.substring(0, 200) : 'none')
         ]
       });
     }
 
-    // JSON last line se nikalo (scraper console logs bhi print karta hai)
     const lines = rawOutput.split('\n');
     let jsonResult = null;
     for (let i = lines.length - 1; i >= 0; i--) {
@@ -108,7 +107,6 @@ console.log('Raw output TOTAL LENGTH:', rawOutput.length);
       return res.json(jsonResult);
     }
 
-    // Fallback — poora output parse karo
     try {
       const result = JSON.parse(rawOutput);
       res.json(result);
@@ -322,35 +320,33 @@ app.post("/fetch", async (req, res) => {
     res.status(500).json({ success: false, error: error.message });
   }
 });
-// ── TEMPORARY DEBUG ROUTE ──
-app.get('/debug-ro', (req, res) => {
-  const scraperPath = path.join(__dirname, 'scraper.js');
-  const command = `node "${scraperPath}" "RO_AFFILIATE" "All Sites" "Current month" "General"`;
-  
-  console.log('DEBUG: Running command:', command);
-  console.log('DEBUG: CONFIG_JSON present:', !!process.env.CONFIG_JSON);
-  
-  let configTest = 'FAILED';
-  try {
-    const cfg = JSON.parse(process.env.CONFIG_JSON || '{}');
-    configTest = 'OK - dashboards: ' + Object.keys(cfg.dashboards || {}).join(', ');
-  } catch(e) {
-    configTest = 'PARSE ERROR: ' + e.message;
-  }
 
-  exec(command, { 
-    timeout: 120000, 
-    maxBuffer: 1024 * 1024 * 10 
-  }, (error, stdout, stderr) => {
-    res.json({
-      config_test: configTest,
-      error: error ? {
-        message: error.message,
-        killed: error.killed,
-        code: error.code
-      } : null,
-      stderr: stderr ? stderr.substring(0, 500) : null,
-      stdout_preview: (stdout || '').substring(0, 2000)
+// ── DEBUG ROUTE ──
+app.get('/debug-ro', (req, res) => {
+  exec('node -e "console.log(JSON.stringify({node: process.version, test: 123}))"',
+  { timeout: 10000 }, (err, stdout, stderr) => {
+
+    const basicTest = stdout ? JSON.parse(stdout.trim()) : null;
+
+    exec('node -e "const p = require(\'puppeteer\'); console.log(JSON.stringify({puppeteer: \'ok\'}))"',
+    { timeout: 15000, cwd: '/opt/render/project/src' }, (err2, stdout2, stderr2) => {
+
+      let configTest = 'FAILED';
+      try {
+        const cfg = JSON.parse(process.env.CONFIG_JSON || '{}');
+        configTest = 'OK - dashboards: ' + Object.keys(cfg.dashboards || {}).join(', ');
+      } catch(e) {
+        configTest = 'PARSE ERROR: ' + e.message;
+      }
+
+      res.json({
+        basic_node: basicTest,
+        puppeteer_test: stdout2 ? stdout2.trim() : 'FAILED',
+        puppeteer_error: err2 ? err2.message : null,
+        puppeteer_stderr: stderr2 || null,
+        config_test: configTest,
+        config_present: !!process.env.CONFIG_JSON
+      });
     });
   });
 });
