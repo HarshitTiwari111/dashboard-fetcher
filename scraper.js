@@ -1,4 +1,5 @@
-const puppeteer = require('puppeteer-core');
+// ✅ puppeteer-core nahi, puppeteer use karo
+const puppeteer = require('puppeteer');
 const fs = require('fs');
 
 const dashboardKey  = process.argv[2];
@@ -824,7 +825,6 @@ response.logs.push(`[DEBUG] Chrome path: "${chromePath}"`);
 
 browser = await puppeteer.launch({
     headless: true,
-    executablePath: chromePath || undefined,
     args: [
         '--no-sandbox',
         '--disable-setuid-sandbox',
